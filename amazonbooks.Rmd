@@ -3,7 +3,9 @@ title: "Parenting Books on Amazon.sg"
 subtitle: "Web-scrapping titles"
 author: www.gerardchung.com
 date: "`r Sys.Date()`"
-output: html_document
+output: 
+    html_document:
+    theme: "cerulean"    
 ---
 
 ```{r setup, include=FALSE}
