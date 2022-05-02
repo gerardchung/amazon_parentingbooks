@@ -1,0 +1,11 @@
+---
+name: "Parenting Books on Amazon.sg"  
+author: "Gerard Chung"  
+output_dir: "docs"  
+output:  
+  html_document:  
+    self_contained: no  
+    theme: flatly  
+navbar:  
+  title: Parenting Books on Amazon.sg" 
+---
