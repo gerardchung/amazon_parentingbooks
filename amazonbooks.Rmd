@@ -17,6 +17,7 @@ I was curious to know the kinds of parenting books sold on Amazon.sg. Searching 
 
 ![How search results look like on Amazon.sg](github_website_project/pictures/amazon_parent_search.png){width=80%}
 <br/><br/> 
+<br/><br/>
 
 ## Web-scrapping search results off Amazon.sg website 
 Using a search word "parenting" in Amazon.sg, I hit 75 pages of search results of about 1400 books. I then scrapped information on the book title. While I have data on the book titles for all 75 pages, I, unfortunately, could only scrap additional meta-data on the date of publication for only the first 20 pages because some information were not available (i.e. missing scrapped data). **And missing data will screw up the scrapping**. This is something that I do not (yet) have the knowledge/skills to resolve. Nonetheless, I can only look at publication dates for the first twenty pages of results. I also still have data on the book titles for all the earch results. 
@@ -192,7 +193,7 @@ library("MetBrewer")
 
 ## Plotting frequency of word occurrences in book titles 
 
-```{r Word Freq Plot, echo=TRUE, fig.width=7, fig.height=7}
+```{r Word Freq Plot, echo=TRUE, fig.width=7, fig.height=7, warning = FALSE, message = FALSE}
 
 word_freq <-
     data_tidy %>% 
@@ -204,14 +205,14 @@ word_freq %>%
     filter(term != "parent" & term != "parents" & term != "parenting") %>% 
     slice_max(word_n, n = 30) %>% 
     ggplot(aes(x = word_n, y = reorder(term,word_n))) +
-    geom_point(size = 3, color = nus_blue) +    
     geom_textsegment(aes(yend=term, xend=-0, label = term),  
-                 alpha = 1, 
+                 alpha = .7, 
                  size = 5, 
                  linewidth = 1.5,
                  linecolor = "black",
                  textcolor = nus_blue, fontface = 7, family = font
               ) +
+        geom_point(size = 3, color = tar_blue,  alpha = 1) +    
     labs(title = "Parenting books on Amazon.sg",
          subtitle = "Most used words in book titles",
          x = "# times word appeared",
@@ -239,7 +240,7 @@ We have books that are **guides** to parenting. Books for children ranging from 
 Would there be more book titles mentioning "mothers" than "fathers"? 
 <br/><br/>
 
-```{r Prepare data for mumdad comparisons, echo=FALSE, results='hide'}
+```{r Prepare data for mumdad comparisons, echo=FALSE, results='hide', warning = FALSE, message = FALSE}
 
 str_view(data_all$title, regex(pattern = "dad|mum|mother|father|dads|mums|mothers|fathers", ignore_case = T), match =T)
 
@@ -265,7 +266,7 @@ str_view_all(dadmum1$title, regex(pattern = "dad|mum|mother|father|dads|mums|mot
 <br/><br/>
 There are **twice** the number of books offered for mothers than for fathers. Still, most books were written for parents in general and do not have references to either mothers or fathers.
 
-```{r echo=FALSE, fig.width=8, fig.height=4}
+```{r echo=FALSE, fig.width=8, fig.height=4, warning = FALSE, message = FALSE}
 # Plot freq for mum and dad 
 
 library(ggtext)
@@ -342,6 +343,66 @@ dadmum_bar %>%
     scale_fill_manual( values = c( "yes"=tar_blue, "no"="gray" ), guide = "none" )
   
 ```
+
+```{r prep data for word usage difference btw mum and dads,  echo = FALSE, results='hide', message = FALSE, warning=FALSE}
+
+both <- dadmum %>% filter(dad == TRUE & mum == TRUE) 
+word_dadmum <- 
+    dadmum %>% 
+    select(-mumdad) %>% 
+    mutate(mumdad = case_when(dad == TRUE ~ "dad",
+                              mum == TRUE ~ "mum")) %>% 
+    filter(!(dad == TRUE & mum == TRUE)) %>% 
+    unnest_tokens(word, title)  %>% 
+    anti_join(stop_words)
+
+word_dadmum_count <- 
+    word_dadmum %>% 
+    group_by(mumdad, word) %>% 
+    summarize(n_mumdad = n()) %>% 
+    ungroup() %>% 
+    filter(!str_detect(word, regex(pattern = "dad|mum|mother|father|dads|mums|mothers|fathers|mom|moms|mama|parents|parenting|book", ignore_case = T))) 
+
+```
+<br/><br/>
+Would **word usage** in titles be different across books for mums and for dads?
+<br/><br/>
+
+```{r plot word differnces btw mum and dad, fig.width=6, fig.height=4, echo = FALSE, message = FALSE, warning=FALSE}
+# Plot words by mum or dads
+library(forcats)
+word_dadmum_count <- word_dadmum_count %>% mutate(word = reorder_within(word, n_mumdad, mumdad)) 
+
+word_dadmum_count %>% 
+    group_by(mumdad) %>%
+    slice_max(n_mumdad, n = 5) %>%
+    ungroup() %>%
+    ggplot(aes(n_mumdad, word, fill = mumdad)) +
+    geom_col(aes(fill = mumdad), show.legend = FALSE) +
+    facet_wrap(~mumdad, ncol = 2, scales = "free_y") +
+    labs(title = "Book Titles with Word 'Dad' or 'Mum'",
+         subtitle = "What words are often used?",
+        x = "# occurrences", y = NULL) + 
+    scale_y_reordered() +
+    scale_x_continuous(expand = c(0,0)) +
+   # theme(panel.spacing.x = unit(-4, "lines")) +
+#    theme(panel.spacing = unit(-5, "lines"))
+    theme(#legend.position = "none",
+        plot.title = element_text(size=22, face="bold"),
+        plot.subtitle = element_text(size=18),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size=15),
+        axis.text.x = element_text(size=13),
+        panel.spacing = unit(-.2, "lines") # for spacing btw facet_wrap
+    ) +
+    scale_fill_manual(values = c(tar_blue, yellow))
+
+```
+
+
+
+
 
 ## What Topics Were These Parenting Books On Amazon.sg About?  
 
@@ -420,7 +481,7 @@ diag %>%
     ggplot(aes(x = coherence, y = exclusivity, color = statistic))  +
     geom_text(aes(label = name), nudge_x = 1) + geom_point() +
     labs(x = 'Semantic Coherence', y = 'Exclusivity') + theme_light() +
-    scale_color_manual( values = c( "mean"=nus_orange , "median"= nus_blue) )
+    scale_color_manual( values = c( "mean"=tar_blue , "median"= yellow) )
 
 ```
 
