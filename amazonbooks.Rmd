@@ -1,0 +1,518 @@
+---
+title: "Parenting Books on Amazon.sg"
+subtitle: "Web-scrapping titles"
+author: www.gerardchung.com
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## What kinds of Parenting books sold on Amazon.sg?
+
+I was curious to know the kinds of parenting books sold on Amazon.sg. Searching "parenting" in Amazon.sg gets a list of books such as [this](https://www.amazon.sg/s?k=parenting&i=stripbooks&rh=p_36%3A100-&s=relevancerank&page=2&crid=3DGF4OTW5NWUS&qid=1650974729&rnid=6469114051&sprefix=parenting%2Cstripbooks%2C219&ref=sr_pg_2)
+<br/><br/>
+
+![How search results look like on Amazon.sg](github_website_project/pictures/amazon_parent_search.png){width=80%}
+<br/><br/> 
+
+## Web-scrapping search results off Amazon.sg website 
+Using a search word "parenting" in Amazon.sg, I hit 75 pages of search results of about 1400 books. I then scrapped information on the book title. While I have data on the book titles for all 75 pages, I, unfortunately, could only scrap additional meta-data on the date of publication for only the first 20 pages because some information were not available (i.e. missing scrapped data). **And missing data will screw up the scrapping**. This is something that I do not (yet) have the knowledge/skills to resolve. Nonetheless, I can only look at publication dates for the first twenty pages of results. I also still have data on the book titles for all the earch results. 
+My codes for scrapping can be accessed [here](https://github.com/gerardchung/amazon_parentingbooks/blob/main/cr_do/amazon_scrap_SG_final.R).
+
+
+
+```{r load file, include=FALSE}
+rm(list=ls())
+pacman::p_load(dplyr, tidyverse, janitor, stringr, quanteda, tidyr, tidytext)
+
+
+getwd()
+load(file = "an_data/amazon_parentingbooks_all.RData") # these are all books first 50 pages
+rm(title_all, pub_type_all)
+
+load(file = "an_data/amazon_parentingbooks_subset.RData") # these are all books first 50 pages
+rm(title_all, pub_type_all,date_all) # these are books in first 20 pages with dates
+
+
+glimpse(title_tibble_all)
+glimpse(title_tibble_subset)
+
+title_tibble_all <- 
+    title_tibble_all %>% 
+    filter(title != "Purposeful Retirement: How to Bring Happiness and Meaning to Your Retirement (Volunteer Work, Retirement Planning, Retirement Gift)")
+
+title_tibble_subset <- 
+    title_tibble_subset %>% 
+    filter(title != "Purposeful Retirement: How to Bring Happiness and Meaning to Your Retirement (Volunteer Work, Retirement Planning, Retirement Gift)")
+
+```
+
+
+```{r clean up var, include=FALSE}
+# CREATE ID ####
+
+data_all <- 
+    title_tibble_all %>% 
+    mutate(id = row_number(), .before = title)
+
+data_sub <- 
+    title_tibble_subset %>% 
+    mutate(id = row_number(), .before = title)
+
+# Date conversion ####
+data_sub <- data_sub %>% mutate(date1 = as.Date(date, "%d %B %Y"))
+
+# Duplicates 
+    # Remove one book ####
+
+dup <- data_all %>% duplicated()
+tabyl(dup)
+
+dup <- data_all[duplicated(data_all$title), ] 
+NROW(dup) # 51 duplicates in title
+data_all <- data_all[!duplicated(data_all$title), ] # 850 - 51 = 799 
+
+
+dup2 <- data_sub[duplicated(data_sub$title), ] 
+NROW(dup2) # 0 duplicates in title
+data_sub <- data_sub[!duplicated(data_sub$title), ] # no change since no dups
+```
+
+<br/><br/> 
+Let's take a look at the variables in the dataframe.  
+```{r look at vars in data, include=TRUE}
+
+glimpse(data_all)
+```
+
+<br/><br/> 
+From first few rows of the data, we can see the titles and type of publication. The book **"How to Raise Kids Who Aren’t Assholes"** seems interesting.  
+```{r See five rows of data, include=TRUE}
+library(knitr)
+data_all %>%  head(5) %>% kable(digits = 2)
+```
+
+## Preprocessing the data 
+Let's turn the dataframe into a corpus. Then using Quanteda's package to 
+tokenize the titles and also perform some pre-processing steps. I removed any
+numbers, punctuations, filtered out stopwords (which are not useful for 
+analysis, e.g., is, and, we). And then convert the tokens object to dfm. 
+```{r convert corpus, include=TRUE}
+
+corp <- corpus(data_all,
+               docid_field = "id",
+               text_field = "title")
+
+tok <- 
+    corp %>% 
+    tokens(remove_numbers = T,
+           remove_punct = T,
+           remove_separators = T,
+           remove_symbols = T,
+           remove_url = T,
+           include_docvars = T) %>% 
+    tokens_tolower() %>% 
+    tokens_select(pattern = c(stopwords("en")),
+                  selection = "remove") %>% 
+    tokens_ngrams(n = 1:2) 
+
+dfm <-
+    tok %>% dfm() 
+```
+
+## Popular words used in the titles
+Let's see what words appear in the most documents. Most books seem to be guides to parents.  
+```{r see top 10 words that occur most freq across documents, include=TRUE}
+
+
+library(quanteda.textstats)
+topfeatures(dfm, n = 20,scheme = "docfreq")
+
+```
+
+Let's try to plot the number of occurrences of words in the titles. 
+Let's convert the dfm to a tidy format where it is a table with one-token-per-document-per-row
+```{r convert data to tidy, include=FALSE}
+library(tidytext)
+data_tidy <- tidy(dfm)
+```
+
+Each word in each document is given a row in a tidy format.
+```{r glimpse data in tidy format, echo = FALSE, results = TRUE}
+data_tidy %>% arrange(document) %>%  head(20) %>% kable()
+```
+
+
+```{r prepare data for plot, include=FALSE}
+
+# Freq plot ####
+
+library(ggtext)
+library(scales)
+library(showtext)
+
+#install.packages("geomtextpath")
+library(geomtextpath)
+
+#font_add_google("roboto condensed")
+#font_add_google("poppins")
+font_add_google("Dosis", "Dosis")
+
+showtext_opts(dpi = 300)
+showtext_auto(enable = TRUE)
+
+
+#font <- "roboto condensed"
+#label_font <- "roboto condensed"
+#
+#font <- "poppins"
+#label_font <- "poppins"
+
+font <- "Dosis"
+label_font <- "Dosis"
+
+bcolor <- "#7EC8E3"
+fontcolor <- "#000000"
+
+nus_blue = "#003D7C"
+nus_orange = "#EF7C00"
+
+tar_blue = "#7BAFD4"
+yellow = "#FFCC66"
+
+
+theme_set(theme_classic( base_family = font))
+library("MetBrewer")
+# https://github.com/BlakeRMills/MetBrewer#functions
+```
+
+
+## Plotting frequency of word occurrences in book titles 
+
+```{r Word Freq Plot, echo=TRUE, fig.width=7, fig.height=7}
+
+word_freq <-
+    data_tidy %>% 
+    group_by(term) %>% 
+    summarize(word_n = sum(count)) %>% 
+    ungroup()
+
+word_freq %>% 
+    filter(term != "parent" & term != "parents" & term != "parenting") %>% 
+    slice_max(word_n, n = 30) %>% 
+    ggplot(aes(x = word_n, y = reorder(term,word_n))) +
+    geom_point(size = 3, color = nus_blue) +    
+    geom_textsegment(aes(yend=term, xend=-0, label = term),  
+                 alpha = 1, 
+                 size = 5, 
+                 linewidth = 1.5,
+                 linecolor = "black",
+                 textcolor = nus_blue, fontface = 7, family = font
+              ) +
+    labs(title = "Parenting books on Amazon.sg",
+         subtitle = "Most used words in book titles",
+         x = "# times word appeared",
+         y = "Word",
+         caption = "GERARDCHUNG.COM"
+    ) + 
+    theme(#legend.position = "none",
+        plot.title = element_text(size=22, face="bold"),
+        plot.subtitle = element_text(size=18),
+        axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.y = element_blank(),
+       # axis.text.y = element_text(size=12),
+        axis.text.x = element_text(size=15),
+       axis.ticks.y = element_blank()
+    ) + 
+    scale_x_continuous(limits = c(0, 190), breaks = seq(0, 200, by = 20), expand = c(0, 0)) 
+
+```
+<br/><br/>
+We have books that are **guides** to parenting. Books for children ranging from **infants, toddlers, children, and teens**. Books probably for **new parents**. Book for **pregnant** parents. Books to improve **sleep** for the newborns. Some books are **revised** books and some spawned **new editions**. Activity books.
+<br/><br/>
+
+## More books for mothers? 
+Would there be more book titles mentioning "mothers" than "fathers"? 
+<br/><br/>
+
+```{r Prepare data for mumdad comparisons, echo=FALSE, results='hide'}
+
+str_view(data_all$title, regex(pattern = "dad|mum|mother|father|dads|mums|mothers|fathers", ignore_case = T), match =T)
+
+data_all <- 
+    data_all %>% 
+    mutate(mumdad = str_detect(title, regex(pattern = "dad|mum|mother|father|dads|mums|mothers|fathers|mom|mama", ignore_case = T)))
+
+data_all %>% tabyl(mumdad)
+
+dadmum <- 
+    data_all %>% 
+    filter(mumdad == T) %>% 
+    mutate(dad = str_detect(title, regex(pattern = "dad|father|dads|fathers", ignore_case = T)),
+           mum = str_detect(title, regex(pattern = "mum|mother|mums|mothers|mom|mama", ignore_case = T)))
+
+dadmum1 <- dadmum %>% head(20) 
+```
+
+```{r show some titles with dads and mums, echo = TRUE}
+str_view_all(dadmum1$title, regex(pattern = "dad|mum|mother|father|dads|mums|mothers|fathers", ignore_case = T), match =T)
+
+```
+<br/><br/>
+There are **twice** the number of books offered for mothers than for fathers. Still, most books were written for parents in general and do not have references to either mothers or fathers.
+
+```{r echo=FALSE, fig.width=8, fig.height=4}
+# Plot freq for mum and dad 
+
+library(ggtext)
+library(scales)
+library(showtext)
+
+#install.packages("geomtextpath")
+library(geomtextpath)
+
+
+font_add_google("roboto condensed")
+font_add_google("poppins")
+font_add_google("Dosis", "Dosis")
+
+showtext_opts(dpi = 300)
+showtext_auto(enable = TRUE)
+
+font <- "roboto condensed"
+label_font <- "roboto condensed"
+
+font <- "poppins"
+label_font <- "poppins"
+
+font <- "Dosis"
+label_font <- "Dosis"
+
+bcolor <- "#7EC8E3"
+fontcolor <- "#000000"
+nus_blue = "#003D7C"
+nus_orange = "#EF7C00"
+
+tar_blue = "#7BAFD4"
+yellow = "#FFCC66"
+
+theme_set(theme_classic( base_family = font))
+
+
+dadmum_bar <- 
+    dadmum %>% 
+    summarize(n_dad = sum(dad),
+              n_mum = sum(mum)) %>% 
+    pivot_longer(cols = c(n_dad,n_mum)) %>% 
+    add_row(name = "n_all", value = 1049) # this is for neither mum nor dad
+    
+
+dadmum_bar <- 
+    dadmum_bar %>% mutate(ToHighlight = ifelse( name == "n_all", "yes", "no" ) )
+
+
+dadmum_bar %>% 
+    ggplot(aes(y = name, x = value, fill = ToHighlight )) +
+    geom_bar(stat = "identity", width = .6) +
+    scale_y_discrete(labels = c("'No reference 
+                                made'",'"Dad"','"Mum"' )) +
+    geom_text(
+        aes(label = value),
+        colour = "white", size = 4, family = font,
+        hjust = 1.2, vjust = 1.5, position = position_dodge(.9)
+    ) + 
+    theme(#legend.position = "none",
+        plot.title = element_text(size=22, face="bold"),
+        plot.subtitle = element_text(size=18),
+        axis.title.y = element_blank(),
+        axis.title.x = element_text(size = 12),
+        axis.text.y = element_text(size=15),
+        axis.text.x = element_text(size=13)
+    ) +
+    labs(title = "Number of Books with 'mum' or 'dad' in titles", 
+       #  subtitle = "# of books",
+         x = "# of books",
+         #y = "Books titles with 'Mum' or 'Dad'"
+         ) +
+    scale_x_continuous(expand = c(0, 0)) +
+    scale_fill_manual( values = c( "yes"=tar_blue, "no"="gray" ), guide = "none" )
+  
+```
+
+## What Topics Were These Parenting Books On Amazon.sg About?  
+
+```{r load stm file, echo = FALSE, results='hide'}
+rm(list = ls())
+load(file = "an_data/stm/differentK_ExclusSem_spline.RData")
+
+load(file = "an_data/stm/post_stm_analyses/post_stm__spline.RData")
+
+library(ggtext)
+library(scales)
+library(showtext)
+
+#install.packages("geomtextpath")
+library(geomtextpath)
+
+#font_add_google("roboto condensed")
+#font_add_google("poppins")
+font_add_google("Dosis", "Dosis")
+
+showtext_opts(dpi = 300)
+showtext_auto(enable = TRUE)
+
+
+#font <- "roboto condensed"
+#label_font <- "roboto condensed"
+#
+#font <- "poppins"
+#label_font <- "poppins"
+
+font <- "Dosis"
+label_font <- "Dosis"
+
+bcolor <- "#7EC8E3"
+fontcolor <- "#000000"
+
+nus_blue = "#003D7C"
+nus_orange = "#EF7C00"
+
+tar_blue = "#7BAFD4"
+yellow = "#FFCC66"
+
+
+theme_set(theme_classic( base_family = font))
+library("MetBrewer")
+
+```
+
+To identify topics, I ran [structural topic modeling](https://www.structuraltopicmodel.com/) on the titles. STM is based on the Latent Dirichlet Allocation algorithm and its basic premise is to model documents as distributions of topics (topic prevalence) and topics as a distribution of words. Basically, it is used to quantitatively look at what latent topics generated these words used in the titles. STM provides a quick method to "qualitatively" analyze a large set of textual data. If you want to read more on analyzing open-ended survey responses using STM, read my paper [here](https://osf.io/enzst/)
+
+### Identify the possible number of topics using exclusivity and semantic coeherence
+The first challenge is to identify the possible number of latent topics (k) that had generated the distribution of words and topics. Using a plot of semantic coherence and exclusivity, the best k number seems to be k=26 topics (it has the best semantic coherence and exclusivity)
+
+```{r plot btw semantic coh and exclusivity, echo = FALSE, warning = FALSE, message = FALSE}
+library(stminsights)
+diag <- get_diag(models = list(
+    k15 = k15,
+    k20 = k20,
+    k22 = k22,
+    k24 = k24,
+    k25 = k25,
+    k26 = k26,
+    k27 = k27
+   # k28 = k28,
+   # k29 = k29,
+   # k30 = k30,
+   # k31 = k31,
+   # k32 = k32,
+   # k33 = k33,
+   # k34 = k34,
+   # k35 = k35
+),
+outobj = out)
+
+diag %>%
+    ggplot(aes(x = coherence, y = exclusivity, color = statistic))  +
+    geom_text(aes(label = name), nudge_x = 1) + geom_point() +
+    labs(x = 'Semantic Coherence', y = 'Exclusivity') + theme_light() +
+    scale_color_manual( values = c( "mean"=nus_orange , "median"= nus_blue) )
+
+```
+
+### Twenty-six Topics and their highly associated words 
+With a model of 26 topics best fitting the data, let's take a look at the 
+highly associated words for each of the 26 topics.
+We see books on guiding parents to love their kids/teens (Topic 1), on motherhood and pregnancy (Topic 3 and 24), helping parents to develop rich relationships with kids (Topic 25), babies and language development/sleeping (Topic 9 and 6), journaling the process of motherhood/pregnancy (Topic 11), and books on what to expect in the 1st year of parenting (Topic 5). There are also activity books for kids (Topic 14). Dad-Jokes books for parents (Topic 18). Books related to children with Autism (Topic 10). Books on home-schooling (Topic 13)
+
+<br/><br/>
+```{r plot topics and words, echo = FALSE, warning = FALSE, message = FALSE, fig.width=9, fig.height=9}
+
+load(file = "an_data/stm/post_stm_analyses/post_stm__spline.RData")
+
+td_beta <- tidy(stm_k_final, matrix = "beta") # the default is matric =  beta 
+
+### Gamma 
+td_gamma <- tidy(stm_k_final, matrix = "gamma",
+                 document_names = rownames(meta)) 
+# DONT USE out$documents; USE meta
+# Because documents were removed in the pre-processing
+
+td_gamma <- td_gamma %>% mutate(document = as.integer(document))
+
+## Plot topic prevalence with key terms
+library(ggthemes)
+library(scales)
+
+top_terms <- 
+    td_beta %>%
+    arrange(beta) %>%
+    group_by(topic) %>%
+    top_n(6, beta) %>%
+    arrange(-beta) %>%
+    select(topic, term) %>%
+    summarise(terms = list(term)) %>%
+    mutate(terms = map(terms, paste, collapse = ", ")) %>% 
+    unnest()
+
+gamma_terms <- 
+    td_gamma %>%
+    group_by(topic) %>%
+    summarise(gamma = mean(gamma)) %>%
+    arrange(desc(gamma)) %>%
+    left_join(top_terms, by = "topic") %>%
+    mutate(topic = paste0("Topic ", topic),
+           topic = reorder(topic, gamma))
+
+library(wesanderson)
+
+## https://www.datanovia.com/en/blog/easy-way-to-expand-color-palettes-in-r/
+#library(RColorBrewer)
+## Define the number of colors you want
+#nb.cols <- 29
+#mycolors <- colorRampPalette(brewer.pal(8, "Pastel2"))(nb.cols)
+
+library("MetBrewer")
+# https://github.com/BlakeRMills/MetBrewer#functions
+
+gamma_terms %>%
+    top_n(26, gamma) %>%
+    ggplot(aes(topic, gamma, label = terms, fill = topic)) +
+    geom_col(show.legend = FALSE) +
+    geom_text(hjust = 0, nudge_y = 0.0005, size = 3, family = font ) +
+    coord_flip() +
+    scale_y_continuous(expand = c(0,0),
+                       limits = c(0, 0.15),
+                       labels = percent_format()) +
+    #   theme_tufte( ticks = T, base_family=font) +
+    theme(plot.title = element_text(size = 16),
+          plot.subtitle = element_text(size = 13)) +
+    labs(x = NULL, y = expression(gamma),
+         title = "What are the topics of parenting books sold on Amazon.sg",
+         subtitle = "With the top words that contribute to each topic") +
+    # viridis::scale_fill_viridis(discrete = TRUE, option = "D") +
+    scale_fill_manual(values=met.brewer("Tiepolo", 26))
+
+```
+
+
+```{r use kable, echo = FALSE, warning = FALSE, message = FALSE, fig.width=4, fig.height=4}
+
+gamma_terms %>%
+    select(topic, gamma, terms) %>%
+    knitr::kable(digits = 3, 
+                 col.names = c("Topic", "Expected topic proportion", "Top 6 terms"))
+
+
+```
+
+## Conclusion
+It was interesting to see what topics of parenting books were offered on Amazon.sg. This ranges from practical books such as journaling books to joke books, to guides books, as well as books on skills and parenting knowledge. There are still more books for mums than for dads. What will be interesting to look at is how these topics of books change in line with their publication date. Would the number of books for dads change with time? Would certain topics (e.g., books on brain development) change with time?
+
+
+
+
